@@ -1,10 +1,10 @@
-## Welcome to Airship Labs 👋
+## Welcome to Airship Labs
 
 ### 🏔️ launching products in denver, colorado
 
 🔍 View our work at [airshiplabs.com](https://www.airshiplabs.com).
 
-Say 👋 at [hello@airshiplabs.com](mailto:hello@airshiplabs.com).
+👋 Say hi at [hello@airshiplabs.com](mailto:hello@airshiplabs.com).
 
 <!--
 
