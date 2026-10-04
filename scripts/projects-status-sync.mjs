@@ -13,7 +13,7 @@ const ROLLUP = Number(process.env.ROLLUP_PROJECT_NUMBER);
 const SOURCES = (process.env.SOURCE_PROJECT_NUMBERS || "").split(",").map(Number).filter(Boolean);
 const DRY_RUN = process.env.DRY_RUN === "true";
 const TOKEN = process.env.GITHUB_TOKEN;
-const ROLLUP_STATUSES = ["Todo", "In Progress", "Done"]; // anything else maps to Todo
+const ROLLUP_STATUSES = ["Todo", "In Progress", "In review", "Done"]; // anything else maps to Todo
 
 if (!TOKEN || !ROLLUP || SOURCES.length === 0) {
   throw new Error("GITHUB_TOKEN, ROLLUP_PROJECT_NUMBER and SOURCE_PROJECT_NUMBERS are required");
