@@ -1,0 +1,36 @@
+# Copies each issue and PR on the product projects into the 🚀 Airship Labs
+# roll-up project, with its Status. The roll-up is read-only: nothing is ever
+# written back to the source projects. Script: scripts/projects-status-sync.mjs
+name: Projects status sync
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only read and log what would change"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: projects-status-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ROLLUP_PROJECT_NUMBER: "19" # 🚀 Airship Labs (not #8, the old project)
+      # 💌 Sendable Cards, ⛏️ Groom Reaper, ✏️ Sketch It, ⛲ FeatureFountain, 🐛 BugBeacon, ☂️ Yumbrella
+      SOURCE_PROJECT_NUMBERS: "5,10,12,13,14,15"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: node scripts/projects-status-sync.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.PROJECTS_SYNC_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
