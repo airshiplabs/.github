@@ -24,6 +24,9 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write # keepalive step below
     env:
       ROLLUP_PROJECT_NUMBER: "19" # 🚀 Airship Labs (not #8, the old project)
       # 💌 Sendable Cards, ⛏️ Groom Reaper, ✏️ Sketch It, ⛲ FeatureFountain, 🐛 BugBeacon, ☂️ Yumbrella
@@ -34,3 +37,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PROJECTS_SYNC_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run == true }}
+      # Keepalive: GitHub disables scheduled workflows in public repos after
+      # 60 days without repo activity. Re-enabling on every run resets that.
+      - name: Keep the schedule enabled
+        if: always()
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/projects-status-sync.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
