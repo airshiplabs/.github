@@ -1,6 +1,8 @@
 # Copies each issue and PR on the product projects into the 🚀 Airship Labs
-# roll-up project, with its Status. The roll-up is read-only: nothing is ever
-# written back to the source projects. Script: scripts/projects-status-sync.mjs
+# roll-up project, with its Status. First, on the source projects, it moves
+# issues with an open, non-draft linked PR to In review (and back to In
+# progress when all their open linked PRs are drafts); that Status is the only
+# thing it writes there. Script: scripts/projects-status-sync.mjs
 name: Projects status sync
 
 on:

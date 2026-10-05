@@ -1,6 +1,9 @@
 // Projects status sync: adds every issue and PR on the source projects to the
-// roll-up project, and copies each item's Status (source projects are never
-// written). No dependencies; Node 18+.
+// roll-up project, and copies each item's Status. No dependencies; Node 18+.
+//
+// The only write to the source projects: an issue with an open, non-draft
+// linked PR moves to In review (unless Done), and back to In progress when all
+// its open linked PRs are drafts. With no open linked PRs it is left alone.
 //
 // Env: GITHUB_TOKEN (required), ROLLUP_PROJECT_NUMBER, SOURCE_PROJECT_NUMBERS
 // (comma-separated, earlier wins if an item is on several), DRY_RUN=true to
@@ -38,7 +41,10 @@ const ITEMS = `query($org: String!, $number: Int!, $after: String) {
       pageInfo { hasNextPage endCursor }
       nodes {
         id type isArchived
-        content { ... on Issue { id } ... on PullRequest { id } }
+        content {
+          ... on Issue { id closedByPullRequestsReferences(first: 20) { nodes { state isDraft } } }
+          ... on PullRequest { id }
+        }
         fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
       }
     }
@@ -64,12 +70,42 @@ function mapStatus(name) {
   return match || "Todo";
 }
 
+const SET = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+  updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } }
+}`;
+
+// Source Status for an issue from its linked PRs, or null to leave it alone.
+function reviewStatus(item) {
+  const open = (item.content.closedByPullRequestsReferences?.nodes || []).filter((pr) => pr?.state === "OPEN");
+  const status = (item.fieldValueByName?.name || "").trim().toLowerCase();
+  if (open.some((pr) => !pr.isDraft)) return status === "done" || status === "in review" ? null : "in review";
+  if (open.length > 0 && status === "in review") return "in progress";
+  return null;
+}
+
+const review = { toInReview: 0, toInProgress: 0 };
 const stats = { added: 0, statusChanged: 0, unchanged: 0, draftsSkipped: 0, noAccessSkipped: 0, archivedSkipped: 0, onSeveralProjects: 0 };
 
-// 1. Desired Status per issue/PR, from the source projects (read-only).
+// 1. Desired Status per issue/PR, from the source projects.
 const desired = new Map(); // content id -> roll-up Status name
 for (const number of SOURCES) {
-  const { items } = await loadProject(number);
+  const { id, field, items } = await loadProject(number);
+  // 1a. In review from linked PRs, written to the source project first so the
+  // roll-up picks it up in this same run.
+  const sourceOption = (name) => {
+    const option = field?.options.find((o) => o.name.toLowerCase() === name);
+    if (!option) throw new Error(`Source project #${number} has no Status option "${name}"`);
+    return option;
+  };
+  for (const item of items) {
+    if (item.type !== "ISSUE" || item.isArchived || !item.content?.id) continue;
+    const next = reviewStatus(item);
+    if (!next) continue;
+    const option = sourceOption(next);
+    review[next === "in review" ? "toInReview" : "toInProgress"]++;
+    if (!DRY_RUN) await gql(SET, { project: id, item: item.id, field: field.id, option: option.id });
+    item.fieldValueByName = { name: option.name };
+  }
   for (const item of items) {
     if (item.type === "DRAFT_ISSUE") { stats.draftsSkipped++; continue; }
     if (!item.content?.id) { stats.noAccessSkipped++; continue; } // REDACTED: token can't see the repo
@@ -97,9 +133,6 @@ const ADD = `mutation($project: ID!, $content: ID!) {
     item { id isArchived fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } }
   }
 }`;
-const SET = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
-  updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } }
-}`;
 
 for (const [contentId, status] of desired) {
   let target = current.get(contentId);
@@ -115,5 +148,6 @@ for (const [contentId, status] of desired) {
   if (!DRY_RUN) await gql(SET, { project: rollup.id, item: target.itemId, field: rollup.field.id, option: optionId[status] });
 }
 
+console.log(`${DRY_RUN ? "DRY RUN (nothing written): would have " : ""}moved ${review.toInReview} source issues to In review, ${review.toInProgress} back to In progress`);
 console.log(`${DRY_RUN ? "DRY RUN (nothing written): would have " : ""}added ${stats.added}, statuses changed ${stats.statusChanged}, drafts skipped ${stats.draftsSkipped}`);
 console.log(`Also: unchanged ${stats.unchanged}, not accessible ${stats.noAccessSkipped}, archived in roll-up ${stats.archivedSkipped}, on several source projects ${stats.onSeveralProjects}`);
