@@ -2,8 +2,9 @@
 // roll-up project, and copies each item's Status. No dependencies; Node 18+.
 //
 // The only write to the source projects: an issue with an open, non-draft
-// linked PR moves to In review (unless Done), and back to In progress when all
-// its open linked PRs are drafts. With no open linked PRs it is left alone.
+// linked PR moves to In review (unless Done or Blocked), and back to In
+// progress when all its open linked PRs are drafts. With no open linked PRs
+// it is left alone.
 //
 // Env: GITHUB_TOKEN (required), ROLLUP_PROJECT_NUMBER, SOURCE_PROJECT_NUMBERS
 // (comma-separated, earlier wins if an item is on several), DRY_RUN=true to
@@ -16,7 +17,7 @@ const ROLLUP = Number(process.env.ROLLUP_PROJECT_NUMBER);
 const SOURCES = (process.env.SOURCE_PROJECT_NUMBERS || "").split(",").map(Number).filter(Boolean);
 const DRY_RUN = process.env.DRY_RUN === "true";
 const TOKEN = process.env.GITHUB_TOKEN;
-const ROLLUP_STATUSES = ["Todo", "In Progress", "In review", "Done"]; // anything else maps to Todo
+const ROLLUP_STATUSES = ["Todo", "In Progress", "Blocked", "In review", "Done"]; // anything else maps to Todo
 
 if (!TOKEN || !ROLLUP || SOURCES.length === 0) {
   throw new Error("GITHUB_TOKEN, ROLLUP_PROJECT_NUMBER and SOURCE_PROJECT_NUMBERS are required");
@@ -78,7 +79,7 @@ const SET = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) 
 function reviewStatus(item) {
   const open = (item.content.closedByPullRequestsReferences?.nodes || []).filter((pr) => pr?.state === "OPEN");
   const status = (item.fieldValueByName?.name || "").trim().toLowerCase();
-  if (open.some((pr) => !pr.isDraft)) return status === "done" || status === "in review" ? null : "in review";
+  if (open.some((pr) => !pr.isDraft)) return ["done", "in review", "blocked"].includes(status) ? null : "in review";
   if (open.length > 0 && status === "in review") return "in progress";
   return null;
 }
