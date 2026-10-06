@@ -1,0 +1,72 @@
+# Reusable workflow: turns GitHub's native auto-merge (squash) on for a PR when
+#   - it's open, has the `review:auto` label and isn't a draft,
+#   - it targets the default branch, and
+#   - it changes nothing under `.github/` (so a PR can't add a workflow that
+#     fakes `QA checks` and merge itself).
+# Otherwise it turns auto-merge off if it was on.
+#
+# GitHub merges only once the repo's required checks pass (CI, `QA checks`,
+# task-list-completed for the Pre-merge boxes), so this workflow never polls
+# CI. It never posts `QA checks` either: only Tessa or Archie do (brain
+# decision 0005). Dependabot PRs are left alone. Callers live in each product
+# repo; see airshiplabs/.github#6 for the caller snippet.
+name: review:auto auto-merge
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: review-auto-merge
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge
+      pull-requests: write # gh pr merge
+    concurrency:
+      group: review-auto-merge-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Turn auto-merge on or off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          # Read the PR fresh: the event payload can be stale when events land close together.
+          pr=$(gh api "repos/$GH_REPO/pulls/$PR")
+          # Changed paths, including the old path of a rename.
+          dotgithub=$(gh api --paginate "repos/$GH_REPO/pulls/$PR/files?per_page=100" \
+            --jq '.[] | .filename, .previous_filename // empty | select(startswith(".github/"))')
+
+          why=()
+          [ "$(jq -r .state <<<"$pr")" = open ] || why+=("not open")
+          jq -e 'any(.labels[]; .name == "review:auto")' <<<"$pr" >/dev/null || why+=("no review:auto label")
+          [ "$(jq -r .draft <<<"$pr")" = false ] || why+=("draft")
+          [ "$(jq -r .base.ref <<<"$pr")" = "$DEFAULT_BRANCH" ] || why+=("base isn't $DEFAULT_BRANCH")
+          [ -z "$dotgithub" ] || why+=("changes .github/ (merge by hand):" "$dotgithub")
+          # The files API lists at most 3,000 files, so a bigger PR can't be checked.
+          [ "$(jq -r .changed_files <<<"$pr")" -le 3000 ] || why+=("too many files to check")
+
+          on=$(jq -r '.auto_merge != null' <<<"$pr")
+          url=$(jq -r .html_url <<<"$pr")
+
+          if [ ${#why[@]} -eq 0 ]; then
+            if [ "$on" = true ]; then echo "Qualifies; auto-merge is already on."; exit 0; fi
+            echo "Qualifies: turning auto-merge (squash) on."
+            # GitHub refuses --auto when the PR is already mergeable ("clean
+            # status"). Then merge now; the required checks still gate it.
+            gh pr merge "$url" --auto --squash || gh pr merge "$url" --squash
+          else
+            echo "Doesn't qualify:"; printf -- '- %s\n' "${why[@]}"
+            if [ "$on" = true ]; then
+              echo "Turning auto-merge off."
+              gh pr merge "$url" --disable-auto
+            fi
+          fi
