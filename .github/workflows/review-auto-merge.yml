@@ -1,0 +1,78 @@
+# Reusable workflow: turns GitHub's native auto-merge (squash) on for a PR when
+#   - it has the `review:auto` label,
+#   - it isn't a draft and targets the default branch, and
+#   - every checkbox under "## Pre-merge" in its body is ticked
+#     (the org PR template: .github/pull_request_template.md).
+# Otherwise it turns auto-merge off if it was on (label removed, box unticked,
+# back to draft, retargeted, ...).
+#
+# GitHub merges only once the repo's rulesets pass (CI, `QA checks`,
+# task-list-completed), so this workflow never polls CI. It never posts
+# `QA checks` either: only Tessa or Archie do (brain decision 0005).
+# Dependabot PRs are skipped. Callers live in each product repo; see the PR
+# that added this file for the caller snippet.
+name: review:auto auto-merge
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: review-auto-merge
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # gh pr merge
+      pull-requests: write # gh pr merge
+    concurrency:
+      group: review-auto-merge-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Turn auto-merge on or off
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          # Read the PR fresh: the event payload can be stale when events land close together.
+          pr=$(gh api "repos/$GH_REPO/pulls/$PR")
+
+          # Lines under "## Pre-merge", up to the next "#" or "##" heading.
+          premerge=$(jq -r '.body // ""' <<<"$pr" | tr -d '\r' | awk '
+            tolower($0) ~ /^##[[:space:]]+pre-merge/ { on = 1; next }
+            on && /^##?[[:space:]]/ { exit }
+            on')
+          box='^[[:space:]]*([-*+]|[0-9]+[.)])[[:space:]]+\['
+          ticked=$(grep -cE "${box}[xX]\]" <<<"$premerge" || true)
+          unticked=$(grep -cE "${box}[[:space:]]\]" <<<"$premerge" || true)
+
+          why=()
+          [ "$(jq -r .state <<<"$pr")" = open ] || why+=("not open")
+          jq -e 'any(.labels[]; .name == "review:auto")' <<<"$pr" >/dev/null || why+=("no review:auto label")
+          [ "$(jq -r .draft <<<"$pr")" = false ] || why+=("draft")
+          [ "$(jq -r .base.ref <<<"$pr")" = "$DEFAULT_BRANCH" ] || why+=("base isn't $DEFAULT_BRANCH")
+          [ "$ticked" -gt 0 ] || why+=("no ticked Pre-merge checkboxes")
+          [ "$unticked" -eq 0 ] || why+=("$unticked unticked Pre-merge checkbox(es)")
+
+          on=$(jq -r '.auto_merge != null' <<<"$pr")
+          url=$(jq -r .html_url <<<"$pr")
+
+          if [ ${#why[@]} -eq 0 ]; then
+            if [ "$on" = true ]; then echo "Qualifies; auto-merge is already on."; exit 0; fi
+            echo "Qualifies: turning auto-merge (squash) on."
+            # GitHub refuses --auto when the PR is already mergeable ("clean
+            # status"). Then merge now; the rulesets still gate this merge.
+            gh pr merge "$url" --auto --squash || gh pr merge "$url" --squash
+          else
+            echo "Doesn't qualify:"; printf -- '- %s\n' "${why[@]}"
+            if [ "$on" = true ]; then
+              echo "Turning auto-merge off."
+              gh pr merge "$url" --disable-auto
+            fi
+          fi
