@@ -31,8 +31,8 @@ jobs:
       actions: write # keepalive step below
     env:
       ROLLUP_PROJECT_NUMBER: "19" # 🚀 Airship Labs (not #8, the old project)
-      # 💌 Sendable Cards, ⛏️ Groom Reaper, ✏️ Sketch It, ⛲ FeatureFountain, 🐛 BugBeacon, ☂️ Yumbrella
-      SOURCE_PROJECT_NUMBERS: "5,10,12,13,14,15"
+      # 💌 Sendable Cards, ⛏️ Groom Reaper, ✏️ Sketch It, ⛲ FeatureFountain, 🐛 BugBeacon, ☂️ Yumbrella, 🏡 ResidentHelm
+      SOURCE_PROJECT_NUMBERS: "5,10,12,13,14,15,20"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: node scripts/projects-status-sync.mjs
