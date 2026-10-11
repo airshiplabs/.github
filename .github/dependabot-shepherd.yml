@@ -1,0 +1,4 @@
+# Org-wide settings for the dependabot-shepherd-airshiplabs GitHub App.
+# Dependabot ignores "@dependabot rebase" from GitHub Apps, so the app must not post it.
+# Dependabot still rebases its own PRs when they conflict.
+rebase: false
