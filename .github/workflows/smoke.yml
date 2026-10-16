@@ -1,0 +1,142 @@
+# Reusable production smoke test. Callers pass base_url (the real prod domain,
+# never a deployment URL) and app_name. The caller repo owns
+# playwright.smoke.config.ts and a `test:smoke` script.
+# On failure: comment on (or open) the single `smoke-failure` issue.
+# On success: close any open `smoke-failure` issue.
+name: Production smoke test
+
+on:
+  workflow_call:
+    inputs:
+      base_url:
+        type: string
+        required: true
+      app_name:
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    name: smoke (${{ inputs.app_name || github.event.repository.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: smoke-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f bun.lock ] || [ -f bun.lockb ]; then
+            echo "pm=bun" >> "$GITHUB_OUTPUT"
+          else
+            echo "pm=npm" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: ${{ steps.pm.outputs.pm == 'npm' && 'npm' || '' }}
+
+      - if: steps.pm.outputs.pm == 'bun'
+        uses: oven-sh/setup-bun@v2
+
+      - if: steps.pm.outputs.pm == 'bun'
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock', 'bun.lockb') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: |
+          if [ "${{ steps.pm.outputs.pm }}" = bun ]; then bun install --frozen-lockfile; else npm ci; fi
+
+      - name: Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v6
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = true ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Run smoke tests
+        env:
+          SMOKE_BASE_URL: ${{ inputs.base_url }}
+        run: |
+          if [ "${{ steps.pm.outputs.pm }}" = bun ]; then bun run test:smoke; else npm run test:smoke; fi
+
+      - name: Upload report, traces and screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-${{ inputs.app_name || github.event.repository.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Open or update smoke-failure issue
+        if: failure()
+        uses: actions/github-script@v9
+        env:
+          APP_NAME: ${{ inputs.app_name || github.event.repository.name }}
+          BASE_URL: ${{ inputs.base_url }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const label = "smoke-failure";
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (e) {
+              if (e.status !== 404) throw e;
+              await github.rest.issues.createLabel({ owner, repo, name: label, color: "d73a4a", description: "Production smoke test is failing" });
+            }
+            const open = await github.rest.issues.listForRepo({ owner, repo, labels: label, state: "open", per_page: 1 });
+            const body = `Smoke test failed again against ${process.env.BASE_URL} (${context.eventName}): ${runUrl}`;
+            if (open.data.length) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: open.data[0].number, body });
+            } else {
+              await github.rest.issues.create({
+                owner, repo, labels: [label],
+                title: `Production smoke test failing: ${process.env.APP_NAME}`,
+                body: `The production smoke test against ${process.env.BASE_URL} failed (${context.eventName}).\n\nRun, report and traces: ${runUrl}\n\nThis issue closes itself on the next green run.`,
+              });
+            }
+
+      - name: Close smoke-failure issue
+        if: success()
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const open = await github.rest.issues.listForRepo({ owner, repo, labels: "smoke-failure", state: "open" });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number, body: `Smoke test is green again: ${runUrl}` });
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: "closed", state_reason: "completed" });
+            }
