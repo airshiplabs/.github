@@ -37,6 +37,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: smoke-${{ github.repository }}-${{ inputs.signed_in }}
+  cancel-in-progress: false
+
 jobs:
   signed-out:
     if: ${{ !inputs.signed_in }}
