@@ -1,4 +1,17 @@
 # Org-wide settings for the dependabot-shepherd-airshiplabs GitHub App.
+# Probot reads this when a repo has no .github/dependabot-shepherd.yml of its own.
+# A repo file replaces this one. Keys that file omits use the app defaults
+# (merge and security stay minor), not the values below.
+#
+# Ceiling is the largest bump the app may approve and queue for auto-merge:
+# none, patch, minor, or major. "major" includes minor and patch. Security
+# updates use whichever of `merge` and `security` is higher, so both are
+# major. GitHub still merges only after the repo's required checks pass.
+# Matthew, Oct 26, 2026: every product repo auto-merges all Dependabot PRs
+# once CI passes.
+merge: major
+security: major
+
 # Dependabot ignores "@dependabot rebase" from GitHub Apps, so the app must not post it.
 # Dependabot still rebases its own PRs when they conflict.
 rebase: false
