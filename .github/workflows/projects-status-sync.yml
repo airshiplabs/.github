@@ -7,7 +7,10 @@ name: Projects status sync
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # Hourly on weekdays during US working hours, plus once overnight (UTC).
+    # Was every 15 min (96 runs/day); now 14 runs/weekday, 1 on weekends.
+    - cron: "7 13-23 * * 1-5"
+    - cron: "37 6 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -25,7 +28,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 3
     permissions:
       contents: read
       actions: write # keepalive step below

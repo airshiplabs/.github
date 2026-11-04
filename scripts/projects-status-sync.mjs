@@ -23,15 +23,28 @@ if (!TOKEN || !ROLLUP || SOURCES.length === 0) {
   throw new Error("GITHUB_TOKEN, ROLLUP_PROJECT_NUMBER and SOURCE_PROJECT_NUMBERS are required");
 }
 
-async function gql(query, variables) {
-  const res = await fetch("https://api.github.com/graphql", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables }),
-  });
-  const body = await res.json();
-  if (!res.ok || body.errors) throw new Error(`GraphQL ${res.status}: ${JSON.stringify(body.errors ?? body)}`);
-  return body.data;
+// Retries transient GitHub errors (5xx, HTML error pages, dropped sockets),
+// which caused every failed scheduled run so far.
+async function gql(query, variables, attempt = 1) {
+  try {
+    const res = await fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables }),
+    });
+    const text = await res.text();
+    if (res.status >= 500 || res.status === 429) throw Object.assign(new Error(`GraphQL ${res.status}`), { retry: true });
+    let body;
+    try { body = JSON.parse(text); } catch { throw Object.assign(new Error(`GraphQL ${res.status}: non-JSON body`), { retry: true }); }
+    if (!res.ok || body.errors) throw new Error(`GraphQL ${res.status}: ${JSON.stringify(body.errors ?? body)}`);
+    return body.data;
+  } catch (err) {
+    const transient = err.retry || err instanceof TypeError; // fetch failed / socket closed
+    if (!transient || attempt >= 4) throw err;
+    console.warn(`gql attempt ${attempt} failed (${err.message}); retrying`);
+    await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+    return gql(query, variables, attempt + 1);
+  }
 }
 
 const ITEMS = `query($org: String!, $number: Int!, $after: String) {
