@@ -1,0 +1,17 @@
+# Org-wide settings for the merge-warden-airshiplabs GitHub App.
+# Probot reads this when a repo has no .github/merge-warden.yml of its own.
+# A repo file replaces this one, unless it starts with `_extends: .github`:
+# then Probot merges the repo file on top of this one.
+#
+# Without `authors` the app allows only the repo owner, which is the
+# airshiplabs org, so it skips every PR a person opens.
+authors:
+  - bostonaholic
+
+# No `ci_checks` here: each repo names its own CI jobs. A repo with no
+# `ci_checks` is graded but never merged directly. To enable merging, add
+# to the repo's .github/merge-warden.yml:
+#
+#   _extends: .github
+#   ci_checks:
+#     - <job name>
